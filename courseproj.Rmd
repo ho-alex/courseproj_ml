@@ -1,0 +1,139 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Alex Ho"
+date: "December 18, 2016"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The goal of this project was to take data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants (more information is available from the website here: http://groupware.les.inf.puc-rio.br/har), and based on this historical data, explore the efficacy of various models to predict what "classe" or type of exercise was being done.
+
+After a prediction model was selected, this model was used to predict the "classe" for 20 different test cases.
+
+## Loading the Data
+This chunk of data loads the necessary libraries and and data sets.
+```{r loaddata}
+library(caret)
+library(kernlab)
+library(plyr)
+library(dplyr)
+library(rpart.plot)
+library(rpart)
+
+# training data - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+mypath <- c("C:\\courseproj_ml")
+setwd(mypath)
+
+mydest_train <- c("pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile=mydest_train)
+training <- read.csv(file=mydest_train, header=TRUE)
+
+# test data - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+mydest_test <- c("pml-testing.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile=mydest_test)
+testing <- read.csv(file=mydest_test, header=TRUE)
+```
+
+## Preprocessing
+Below are the steps for preprocessing, which consisted of determining which initial covariates (column names) had either no or a near-zero variance. Covariates with little variability contribute minimally to the model and including too many covariates may result in overfitting. Thus, the code chunks below remove all covariates that were TRUE for either "zerovar" (no variation) or "nzv" (near zero variation) from training and testing data.
+```{r preprocessing}
+# removing near zero covariates
+# zerovar TRUE means that there is only one distinct value in the predictor
+# nzv TRUE means that the predictor is a near zero variance predictor
+# consider removing all zerovar = TRUE or nzv = TRUE ; the identifiers
+# and "classe" are all still intact
+
+nsv <- nearZeroVar(training, saveMetrics=TRUE)
+nsvind <- mutate(nsv, include=!(nsv$zeroVar|nsv$nzv))
+trainingnew <- training[,nsvind$include]
+
+mynas <- matrix(0, nrow=1, ncol = dim(trainingnew)[2])
+for (i in 1:dim(trainingnew)[2]){
+  mynas[,i] <- sum(is.na(trainingnew[,i]))
+}
+
+#looks like columns 1:7, 11:26, 50:53, 57:62, 64:73, 86:88, 90 have 19216 NA values (out of 19622 obs)
+removecols <- c(1:7, 11:26, 40, 50:53, 57:62, 64:73, 86:88, 90)
+trainingnew2 <- trainingnew[,-removecols]
+
+#remove the same columns from testing
+testingnew <- testing[,nsvind$include]
+testingnew2 <- testingnew[,-removecols]
+```
+
+## Partitioning for Validation
+In order to explore the efficacy of various models without using the data set aside ultimately for "testing", it was necessary to create a "validation" set from the "training" data. The script for splitting the allocated "training" data into 60% training and 40% validation data is shown below.
+```{r partitioning, cache=TRUE}
+#partition training set into training/test sets for cross validation (to decide
+# what type of model to use, based on accuracy)
+set.seed(234)
+inTrain <- createDataPartition(trainingnew2$classe, p=0.6)[[1]]
+validation <- trainingnew2[-inTrain,]
+trainingnew3 <- trainingnew2[inTrain,]
+trainingnew2 <- trainingnew3
+
+dim(validation)
+dim(trainingnew2)
+```
+
+## Using Classification Trees
+The chunk of code below generates the prediction model using classification trees. After the model is generated from the "training" data, the model was used to predict the exercise class ("classe" ) on the "validation" data. There is also code to generate a Confusion Matrix to summarize various accuracy parameters of the prediction model, but the results are displayed in a subsequent section of this report.
+```{r trees}
+# trees - accuracy 71%
+mytree <- rpart(classe ~. ,method="class", data=trainingnew2)
+predtree <- predict(mytree, validation, type="class")
+conftree <- confusionMatrix(predtree, validation$classe)
+# predict on testing data
+predtreetesting <- predict(mytree, testingnew2, type="class")
+rpart.plot(mytree,main="Classification Treet", extra=102, under=TRUE, faclen=0)
+```
+
+## Using Random Forest
+The chunk of code below generates the prediction model using random forests. After the model is generated from the "training" data, the model was used to predict the exercise class ("classe" ) on the "validation" data. There is also code to generate a Confusion Matrix to summarize various accuracy parameters of the prediction model, but the results are displayed in a subsequent section of this report.
+```{r rf}
+# random forest - accuracy 99%
+set.seed(234)
+library(randomForest)
+myrf <- randomForest(classe ~., data=trainingnew2)
+predrf <- predict(myrf, validation)
+confrf <- confusionMatrix(predrf, validation$classe)
+# predict on testing data
+predrftesting <- predict(myrf, testingnew2)
+```
+
+## Using Boosting
+The chunk of code below generates the prediction model using boosting. After the model is generated from the "training" data, the model was used to predict the exercise class ("classe" ) on the "validation" data. There is also code to generate a Confusion Matrix to summarize various accuracy parameters of the prediction model, but the results are displayed in a subsequent section of this report.
+```{r gbm, cache=TRUE}
+# boosting - accuracy 96%
+set.seed(234)
+mygbm <- train(classe ~., method="gbm", data=trainingnew2, verbose=FALSE, trControl=trainControl(method="cv", number=3))
+predgbm <- predict(mygbm, validation)
+confgbm <- confusionMatrix(predgbm, validation$classe)
+# predict on testing data
+predgbmtesting <- predict(mygbm, testingnew2)
+```
+
+## Comparing Confusion Matrices
+This section displays the Confusion Matrices for Classification Trees, Random Forest, and Boosting, respectively. It can be seen that the Random Forest model has the highest accuracy (99%).
+```{r displayconf}
+# confusion matrix - trees
+conftree
+
+# confusion matrix - random forest
+confrf
+
+# confusion matrix - boosting
+confgbm
+```
+
+## Predicting on the Testing Data Using Random Forest
+Below is the code chunk to display the "classe" results predicted on the 20 testing cases, based on the Random Forest model.
+```{r predrf}
+#choose random forest, and predict
+predrftesting
+```
